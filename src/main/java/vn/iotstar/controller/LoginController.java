@@ -1,6 +1,9 @@
 package vn.iotstar.controller;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Pattern;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.*;
@@ -12,6 +15,8 @@ import vn.iotstar.util.Constant;
 @SuppressWarnings("serial")
 @WebServlet(urlPatterns = "/login")
 public class LoginController extends HttpServlet {
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         HttpSession session = req.getSession(false);
@@ -47,25 +52,48 @@ public class LoginController extends HttpServlet {
         resp.setContentType("text/html");
         resp.setCharacterEncoding("UTF-8");
         req.setCharacterEncoding("UTF-8");
+
         String username = req.getParameter("username");
         String password = req.getParameter("password");
         username = username == null ? "" : username.trim();
         password = password == null ? "" : password;
-
         boolean isRememberMe = "on".equals(req.getParameter("remember"));
-        if (username.isEmpty() || password.isEmpty()) {
-            req.setAttribute("alert", "Tài khoản hoặc mật khẩu không được rỗng");
+
+        req.setAttribute("username", username);
+        req.setAttribute("remember", isRememberMe);
+
+        Map<String, String> errors = new HashMap<>();
+        if (username.isEmpty()) {
+            errors.put("username", "Vui lòng nhập tên đăng nhập hoặc email.");
+        } else if (username.contains("@") && !EMAIL_PATTERN.matcher(username).matches()) {
+            errors.put("username", "Email không đúng định dạng.");
+        }
+
+        if (password.isEmpty()) {
+            errors.put("password", "Vui lòng nhập mật khẩu.");
+        }
+
+        if (!errors.isEmpty()) {
+            req.setAttribute("errors", errors);
             req.getRequestDispatcher("/views/login.jsp").forward(req, resp);
             return;
         }
 
         UserService service = new UserServiceImpl();
         User user = service.login(username, password);
+        if (user == null && username.contains("@")) {
+            User byEmail = service.findByEmail(username);
+            if (byEmail != null) {
+                user = service.login(byEmail.getUserName(), password);
+            }
+        }
+
         if (user == null) {
-            req.setAttribute("alert", "Tài khoản hoặc mật khẩu không đúng");
+            req.setAttribute("alert", "Tài khoản hoặc mật khẩu không đúng.");
             req.getRequestDispatcher("/views/login.jsp").forward(req, resp);
             return;
         }
+
         if (!user.isActive()) {
             HttpSession session = req.getSession(true);
             session.setAttribute("verifyEmail", user.getEmail());
@@ -78,7 +106,7 @@ public class LoginController extends HttpServlet {
         HttpSession session = req.getSession(true);
         session.setAttribute("account", user);
         if (isRememberMe) {
-            saveRemeberMe(resp, username);
+            saveRemeberMe(resp, user.getUserName());
         }
         resp.sendRedirect(req.getContextPath() + "/waiting");
     }

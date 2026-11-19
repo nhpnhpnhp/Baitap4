@@ -1,6 +1,9 @@
 package vn.iotstar.controller;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Pattern;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.*;
@@ -11,6 +14,10 @@ import vn.iotstar.util.Constant;
 @SuppressWarnings("serial")
 @WebServlet(urlPatterns = "/register")
 public class RegisterController extends HttpServlet {
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9._-]{3,100}$");
+    private static final Pattern PHONE_PATTERN = Pattern.compile("^\\+?[0-9]{9,15}$");
+
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         HttpSession session = req.getSession(false);
@@ -34,27 +41,67 @@ public class RegisterController extends HttpServlet {
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         resp.setCharacterEncoding("UTF-8");
         req.setCharacterEncoding("UTF-8");
+
         String username = trim(req.getParameter("username"));
         String password = req.getParameter("password");
+        String confirmPassword = req.getParameter("confirmPassword");
         String email = trim(req.getParameter("email"));
         String fullname = trim(req.getParameter("fullname"));
         String phone = trim(req.getParameter("phone"));
 
-        if (username.isEmpty() || password == null || password.isEmpty() || email.isEmpty()
-                || fullname.isEmpty() || phone.isEmpty()) {
-            req.setAttribute("alert", "Vui lòng nhập đầy đủ thông tin đăng ký!");
-            req.getRequestDispatcher(Constant.Path.REGISTER).forward(req, resp);
-            return;
+        password = password == null ? "" : password;
+        confirmPassword = confirmPassword == null ? "" : confirmPassword;
+
+        req.setAttribute("username", username);
+        req.setAttribute("email", email);
+        req.setAttribute("fullname", fullname);
+        req.setAttribute("phone", phone);
+
+        Map<String, String> errors = new HashMap<>();
+        UserService service = new UserServiceImpl();
+
+        if (username.isEmpty()) {
+            errors.put("username", "Tên đăng nhập không được để trống.");
+        } else if (!USERNAME_PATTERN.matcher(username).matches()) {
+            errors.put("username", "Tên đăng nhập dài 3-100 ký tự, chỉ gồm chữ, số và ký tự . _ -");
+        } else if (service.checkExistUsername(username)) {
+            errors.put("username", "Tên đăng nhập đã tồn tại.");
         }
 
-        UserService service = new UserServiceImpl();
-        if (service.checkExistEmail(email)) {
-            req.setAttribute("alert", "Email đã tồn tại!");
-            req.getRequestDispatcher(Constant.Path.REGISTER).forward(req, resp);
-            return;
+        if (email.isEmpty()) {
+            errors.put("email", "Email không được để trống.");
+        } else if (email.length() > 255 || !EMAIL_PATTERN.matcher(email).matches()) {
+            errors.put("email", "Email không đúng định dạng.");
+        } else if (service.checkExistEmail(email)) {
+            errors.put("email", "Email đã được sử dụng.");
         }
-        if (service.checkExistUsername(username)) {
-            req.setAttribute("alert", "Tài khoản đã tồn tại!");
+
+        if (password.isEmpty()) {
+            errors.put("password", "Mật khẩu không được để trống.");
+        } else if (password.length() < 6 || password.length() > 100) {
+            errors.put("password", "Mật khẩu phải từ 6 đến 100 ký tự.");
+        }
+
+        if (confirmPassword.isEmpty()) {
+            errors.put("confirmPassword", "Vui lòng xác nhận mật khẩu.");
+        } else if (!confirmPassword.equals(password)) {
+            errors.put("confirmPassword", "Mật khẩu xác nhận không khớp.");
+        }
+
+        if (fullname.isEmpty()) {
+            errors.put("fullname", "Họ tên không được để trống.");
+        } else if (fullname.length() < 2 || fullname.length() > 255) {
+            errors.put("fullname", "Họ tên phải từ 2 đến 255 ký tự.");
+        }
+
+        if (phone.isEmpty()) {
+            errors.put("phone", "Số điện thoại không được để trống.");
+        } else if (!PHONE_PATTERN.matcher(phone).matches()) {
+            errors.put("phone", "Số điện thoại không hợp lệ (9-15 chữ số).");
+        }
+
+        if (!errors.isEmpty()) {
+            req.setAttribute("errors", errors);
             req.getRequestDispatcher(Constant.Path.REGISTER).forward(req, resp);
             return;
         }
@@ -72,7 +119,7 @@ public class RegisterController extends HttpServlet {
             }
             resp.sendRedirect(req.getContextPath() + "/verify-otp");
         } else {
-            req.setAttribute("alert", "System error!");
+            req.setAttribute("alert", "Không thể tạo tài khoản. Vui lòng thử lại.");
             req.getRequestDispatcher(Constant.Path.REGISTER).forward(req, resp);
         }
     }

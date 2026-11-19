@@ -1,8 +1,25 @@
 <%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
 <%@ taglib prefix="c" uri="jakarta.tags.core" %>
-<!doctype html><html lang="vi"><head><meta charset="UTF-8"><title>Trang chủ Admin</title><link rel="stylesheet" href="${pageContext.request.contextPath}/assets/style.css"></head><body>
-<%@ include file="/views/topbar.jsp" %>
-<h2>Trang chủ Admin</h2><p>Xin chào, <c:out value="${sessionScope.account.fullName}"/>.</p>
-<p>Tài khoản: <c:out value="${sessionScope.account.userName}"/></p>
-<p><a href="${pageContext.request.contextPath}/admin/categories">Quản lý danh mục (Category)</a></p>
-</body></html>
+<!doctype html>
+<html lang="vi">
+<head>
+    <title>Trang chủ Admin</title>
+</head>
+<body>
+<section class="app-section">
+    <div class="container">
+        <div class="app-card p-4">
+            <span class="ah-eyebrow mb-2">Quản trị</span>
+            <h1 class="h3 mb-2">Trang chủ Admin</h1>
+            <p class="mb-1">Xin chào, <strong class="text-white"><c:out value="${sessionScope.account.fullName}"/></strong>.</p>
+            <p class="text-secondary mb-4">Tài khoản: <c:out value="${sessionScope.account.userName}"/></p>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="${pageContext.request.contextPath}/admin/categories" class="btn btn-ah">Quản lý danh mục</a>
+                <a href="${pageContext.request.contextPath}/home" class="btn btn-ghost">Trang chủ Video</a>
+                <a href="${pageContext.request.contextPath}/video" class="btn btn-ghost">Video của tôi</a>
+            </div>
+        </div>
+    </div>
+</section>
+</body>
+</html>

@@ -10,10 +10,14 @@ import vn.iotstar.service.UserService;
 import vn.iotstar.service.impl.UserServiceImpl;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 @SuppressWarnings("serial")
 @WebServlet(urlPatterns = "/forgot-password")
 public class ForgotPasswordController extends HttpServlet {
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
     private final UserService userService = new UserServiceImpl();
 
     @Override
@@ -34,8 +38,15 @@ public class ForgotPasswordController extends HttpServlet {
         email = email == null ? "" : email.trim();
         req.setAttribute("email", email);
 
+        Map<String, String> errors = new HashMap<>();
         if (email.isEmpty()) {
-            req.setAttribute("alert", "Vui lòng nhập email đã đăng ký.");
+            errors.put("email", "Vui lòng nhập email đã đăng ký.");
+        } else if (email.length() > 255 || !EMAIL_PATTERN.matcher(email).matches()) {
+            errors.put("email", "Email không đúng định dạng.");
+        }
+
+        if (!errors.isEmpty()) {
+            req.setAttribute("errors", errors);
             req.getRequestDispatcher("/views/forgot-password.jsp").forward(req, resp);
             return;
         }
@@ -48,13 +59,14 @@ public class ForgotPasswordController extends HttpServlet {
             session.setAttribute("resetMessage", "Mã OTP đặt lại mật khẩu (hiệu lực 5 phút) đã được gửi đến email của bạn.");
             resp.sendRedirect(req.getContextPath() + "/reset-password");
         } else if ("NOT_FOUND".equals(result)) {
-            req.setAttribute("alert", "Email không tồn tại trong hệ thống.");
+            errors.put("email", "Email không tồn tại trong hệ thống.");
+            req.setAttribute("errors", errors);
             req.getRequestDispatcher("/views/forgot-password.jsp").forward(req, resp);
         } else if ("NOT_ACTIVE".equals(result)) {
             req.setAttribute("alert", "Tài khoản chưa được kích hoạt. Vui lòng kích hoạt tài khoản trước.");
             req.getRequestDispatcher("/views/forgot-password.jsp").forward(req, resp);
         } else {
-            req.setAttribute("alert", "Không thể gửi email OTP. Vui lòng kiểm tra cấu hình SMTP.");
+            req.setAttribute("alert", "Không thể gửi email OTP. Vui lòng thử lại sau.");
             req.getRequestDispatcher("/views/forgot-password.jsp").forward(req, resp);
         }
     }

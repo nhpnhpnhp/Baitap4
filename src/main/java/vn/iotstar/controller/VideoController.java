@@ -24,7 +24,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -45,6 +47,9 @@ import java.util.UUID;
 )
 public class VideoController extends HttpServlet {
     private static final int PAGE_SIZE = 6;
+    private static final long MAX_VIDEO_SIZE = 50L * 1024 * 1024;
+    private static final int MAX_TITLE_LENGTH = 500;
+    private static final int MAX_DESCRIPTION_LENGTH = 500;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(".mp4", ".webm", ".ogg", ".mov");
 
     private final IVideoService videoService = new VideoServiceImpl();
@@ -102,12 +107,21 @@ public class VideoController extends HttpServlet {
         }
 
         String path = req.getServletPath();
-        if ("/video/insert".equals(path)) {
-            handleInsert(req, resp, currentUser);
-        } else if ("/video/update".equals(path)) {
-            handleUpdate(req, resp, currentUser);
-        } else {
-            resp.sendRedirect(req.getContextPath() + "/video");
+        try {
+            if ("/video/insert".equals(path)) {
+                handleInsert(req, resp, currentUser);
+            } else if ("/video/update".equals(path)) {
+                handleUpdate(req, resp, currentUser);
+            } else {
+                resp.sendRedirect(req.getContextPath() + "/video");
+            }
+        } catch (IllegalStateException e) {
+            Map<String, String> errors = new HashMap<>();
+            errors.put("videoFile", "Kích thước file vượt quá giới hạn cho phép (tối đa 50MB).");
+            req.setAttribute("errors", errors);
+            req.setAttribute("alert", "File tải lên quá lớn (tối đa 50MB).");
+            req.setAttribute("categories", categoryService.findAll());
+            req.getRequestDispatcher("/views/video-form.jsp").forward(req, resp);
         }
     }
 
@@ -168,8 +182,17 @@ public class VideoController extends HttpServlet {
             throws ServletException, IOException {
         String title = trim(req.getParameter("title"));
         String description = trim(req.getParameter("description"));
-        int active = parseIntOrDefault(req.getParameter("active"), 1);
-        Category category = resolveCategory(req.getParameter("categoryId"));
+        String activeParam = trim(req.getParameter("active"));
+        String categoryIdParam = trim(req.getParameter("categoryId"));
+
+        Map<String, String> errors = new HashMap<>();
+        validateCommonFields(title, description, activeParam, categoryIdParam, errors);
+
+        int active = "0".equals(activeParam) ? 0 : 1;
+        Category category = errors.containsKey("categoryId") ? null : resolveCategory(categoryIdParam);
+
+        Part videoPart = req.getPart("videoFile");
+        validateVideoPart(videoPart, true, errors);
 
         Video draft = new Video();
         draft.setTitle(title);
@@ -177,18 +200,21 @@ public class VideoController extends HttpServlet {
         draft.setActive(active);
         draft.setCategory(category);
 
-        if (title.isEmpty()) {
-            req.setAttribute("alert", "Vui lòng nhập tiêu đề video.");
+        if (!errors.isEmpty()) {
+            req.setAttribute("errors", errors);
             req.setAttribute("video", draft);
+            req.setAttribute("selectedCategoryId", categoryIdParam);
             req.setAttribute("categories", categoryService.findAll());
             req.getRequestDispatcher("/views/video-form.jsp").forward(req, resp);
             return;
         }
 
-        String savedFileName = saveUploadedVideo(req, true);
+        String savedFileName = saveUploadedVideo(videoPart);
         if (savedFileName == null) {
-            req.setAttribute("alert", "Vui lòng chọn file video hợp lệ (.mp4, .webm, .ogg, .mov).");
+            errors.put("videoFile", "Không thể lưu file video. Vui lòng thử lại.");
+            req.setAttribute("errors", errors);
             req.setAttribute("video", draft);
+            req.setAttribute("selectedCategoryId", categoryIdParam);
             req.setAttribute("categories", categoryService.findAll());
             req.getRequestDispatcher("/views/video-form.jsp").forward(req, resp);
             return;
@@ -207,7 +233,11 @@ public class VideoController extends HttpServlet {
     private void handleUpdate(HttpServletRequest req, HttpServletResponse resp, User currentUser)
             throws ServletException, IOException {
         String videoId = trim(req.getParameter("videoId"));
-        Video video = videoId.isEmpty() ? null : videoService.findById(videoId);
+        if (videoId.isEmpty()) {
+            resp.sendError(400, "ID video không hợp lệ.");
+            return;
+        }
+        Video video = videoService.findById(videoId);
         if (video == null) {
             resp.sendError(404);
             return;
@@ -219,23 +249,45 @@ public class VideoController extends HttpServlet {
 
         String title = trim(req.getParameter("title"));
         String description = trim(req.getParameter("description"));
-        int active = parseIntOrDefault(req.getParameter("active"), 1);
-        Category category = resolveCategory(req.getParameter("categoryId"));
+        String activeParam = trim(req.getParameter("active"));
+        String categoryIdParam = trim(req.getParameter("categoryId"));
 
-        if (title.isEmpty()) {
-            req.setAttribute("alert", "Tiêu đề video không được để trống.");
-            req.setAttribute("video", video);
+        Map<String, String> errors = new HashMap<>();
+        validateCommonFields(title, description, activeParam, categoryIdParam, errors);
+
+        int active = "0".equals(activeParam) ? 0 : 1;
+        Category category = errors.containsKey("categoryId") ? null : resolveCategory(categoryIdParam);
+
+        Part videoPart = req.getPart("videoFile");
+        boolean hasNewFile = videoPart != null && videoPart.getSize() > 0;
+        if (hasNewFile) {
+            validateVideoPart(videoPart, false, errors);
+        }
+
+        if (!errors.isEmpty()) {
+            Video draft = new Video();
+            draft.setVideoId(video.getVideoId());
+            draft.setVideoPath(video.getVideoPath());
+            draft.setTitle(title);
+            draft.setDescription(description);
+            draft.setActive(active);
+            draft.setCategory(category);
+
+            req.setAttribute("errors", errors);
+            req.setAttribute("video", draft);
+            req.setAttribute("selectedCategoryId", categoryIdParam);
             req.setAttribute("categories", categoryService.findAll());
             req.getRequestDispatcher("/views/video-form.jsp").forward(req, resp);
             return;
         }
 
-        Part videoPart = req.getPart("videoFile");
-        if (videoPart != null && videoPart.getSize() > 0) {
-            String newFileName = saveUploadedVideo(req, false);
+        if (hasNewFile) {
+            String newFileName = saveUploadedVideo(videoPart);
             if (newFileName == null) {
-                req.setAttribute("alert", "Định dạng file video không hợp lệ (.mp4, .webm, .ogg, .mov).");
+                errors.put("videoFile", "Không thể lưu file video mới. Vui lòng thử lại.");
+                req.setAttribute("errors", errors);
                 req.setAttribute("video", video);
+                req.setAttribute("selectedCategoryId", categoryIdParam);
                 req.setAttribute("categories", categoryService.findAll());
                 req.getRequestDispatcher("/views/video-form.jsp").forward(req, resp);
                 return;
@@ -251,6 +303,68 @@ public class VideoController extends HttpServlet {
 
         videoService.update(video);
         resp.sendRedirect(req.getContextPath() + "/video");
+    }
+
+    private void validateCommonFields(String title, String description, String activeParam,
+                                      String categoryIdParam, Map<String, String> errors) {
+        if (title.isEmpty()) {
+            errors.put("title", "Tiêu đề video không được để trống.");
+        } else if (title.length() > MAX_TITLE_LENGTH) {
+            errors.put("title", "Tiêu đề video không được vượt quá " + MAX_TITLE_LENGTH + " ký tự.");
+        }
+
+        if (description.length() > MAX_DESCRIPTION_LENGTH) {
+            errors.put("description", "Mô tả không được vượt quá " + MAX_DESCRIPTION_LENGTH + " ký tự.");
+        }
+
+        if (!"0".equals(activeParam) && !"1".equals(activeParam)) {
+            errors.put("active", "Trạng thái không hợp lệ.");
+        }
+
+        if (!categoryIdParam.isEmpty()) {
+            try {
+                int categoryId = Integer.parseInt(categoryIdParam);
+                if (categoryId <= 0 || categoryService.findById(categoryId) == null) {
+                    errors.put("categoryId", "Danh mục được chọn không tồn tại.");
+                }
+            } catch (NumberFormatException e) {
+                errors.put("categoryId", "Danh mục không hợp lệ.");
+            }
+        }
+    }
+
+    private void validateVideoPart(Part part, boolean required, Map<String, String> errors) {
+        if (part == null || part.getSize() == 0) {
+            if (required) {
+                errors.put("videoFile", "Vui lòng chọn file video để tải lên.");
+            }
+            return;
+        }
+        if (part.getSize() > MAX_VIDEO_SIZE) {
+            errors.put("videoFile", "Kích thước file video không được vượt quá 50MB.");
+            return;
+        }
+        String fileName = getFileName(part);
+        if (fileName.isEmpty() || Constant.DEFAULT_FILENAME.equals(fileName)) {
+            errors.put("videoFile", "Tên file video không hợp lệ.");
+            return;
+        }
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex < 0) {
+            errors.put("videoFile", "File video phải có định dạng .mp4, .webm, .ogg hoặc .mov.");
+            return;
+        }
+        String ext = fileName.substring(dotIndex).toLowerCase();
+        if (!ALLOWED_EXTENSIONS.contains(ext)) {
+            errors.put("videoFile", "Định dạng file không được hỗ trợ. Chỉ chấp nhận .mp4, .webm, .ogg, .mov.");
+            return;
+        }
+        String contentType = part.getContentType();
+        if (contentType != null && !contentType.isBlank()
+                && !contentType.startsWith("video/")
+                && !"application/octet-stream".equalsIgnoreCase(contentType)) {
+            errors.put("videoFile", "Loại tệp không hợp lệ. Vui lòng chọn đúng file video.");
+        }
     }
 
     private void handleDelete(HttpServletRequest req, HttpServletResponse resp, User currentUser) throws IOException {
@@ -293,40 +407,24 @@ public class VideoController extends HttpServlet {
         req.getRequestDispatcher("/views/video-detail.jsp").forward(req, resp);
     }
 
-    private String saveUploadedVideo(HttpServletRequest req, boolean required) throws IOException, ServletException {
+    private String saveUploadedVideo(Part part) throws IOException {
         String uploadPath = Constant.VIDEO_DIR;
         File uploadDir = new File(uploadPath);
         if (!uploadDir.exists()) {
             uploadDir.mkdirs();
         }
-
         try {
-            for (Part part : req.getParts()) {
-                if (!"videoFile".equals(part.getName()) || part.getSize() == 0) {
-                    continue;
-                }
-                String fileName = getFileName(part);
-                if (fileName.isEmpty() || Constant.DEFAULT_FILENAME.equals(fileName)) {
-                    return null;
-                }
-                int dotIndex = fileName.lastIndexOf('.');
-                if (dotIndex < 0) {
-                    return null;
-                }
-                String ext = fileName.substring(dotIndex).toLowerCase();
-                if (!ALLOWED_EXTENSIONS.contains(ext)) {
-                    return null;
-                }
-                String safeBase = fileName.substring(0, dotIndex).replaceAll("[^a-zA-Z0-9._-]", "_");
-                String savedFileName = System.currentTimeMillis() + "_" + safeBase + ext;
-                part.write(uploadPath + File.separator + savedFileName);
-                return savedFileName;
-            }
+            String fileName = getFileName(part);
+            int dotIndex = fileName.lastIndexOf('.');
+            String ext = fileName.substring(dotIndex).toLowerCase();
+            String safeBase = fileName.substring(0, dotIndex).replaceAll("[^a-zA-Z0-9._-]", "_");
+            String savedFileName = System.currentTimeMillis() + "_" + safeBase + ext;
+            part.write(uploadPath + File.separator + savedFileName);
+            return savedFileName;
         } catch (FileNotFoundException fne) {
             fne.printStackTrace();
             return null;
         }
-        return required ? null : "";
     }
 
     private void deleteVideoFile(String fileName) {
@@ -363,14 +461,6 @@ public class VideoController extends HttpServlet {
             return categoryId > 0 ? categoryService.findById(categoryId) : null;
         } catch (NumberFormatException e) {
             return null;
-        }
-    }
-
-    private int parseIntOrDefault(String value, int defaultVal) {
-        try {
-            return value == null ? defaultVal : Integer.parseInt(value.trim());
-        } catch (NumberFormatException e) {
-            return defaultVal;
         }
     }
 
